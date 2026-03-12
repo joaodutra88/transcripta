@@ -35,7 +35,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npm run test -- --coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
@@ -55,7 +55,7 @@ jobs:
       - run: npx prisma generate
       - run: npm run build
       - run: npx playwright test --config=tests/e2e/playwright.config.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
