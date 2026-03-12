@@ -214,7 +214,7 @@ describe('setup-handlers', () => {
       fwProbe.emitClose(0)
 
       await vi.waitFor(() => mockedSpawn.mock.calls.length >= 3)
-      // GPU probe fails entirely
+      // GPU probe exits with non-zero — gpuCheck.ok = false
       gpuProbe.emitClose(1)
 
       const result = (await promise) as { ok: boolean; data: Record<string, unknown> }
@@ -282,6 +282,37 @@ describe('setup-handlers', () => {
       expect(result.data.gpuAvailable).toBe(false)
       expect(result.data.gpuName).toBeNull()
     })
+
+    it('returns ok:false when checkSystem throws an unexpected error', async () => {
+      // Make spawn throw synchronously so the async handler catch block fires
+      mockedSpawn.mockImplementationOnce(() => {
+        throw new Error('unexpected spawn failure')
+      })
+
+      const handler = handlers.get('setup:check-system')!
+      const result = (await handler()) as { ok: boolean; error: string; code: string }
+
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('Failed to check system')
+      expect(result.code).toBe('SETUP_CHECK_ERROR')
+    })
+
+    it('uses stderr as output when stdout is empty on process close', async () => {
+      // Covers the `stdout.trim() || stderr.trim()` false branch where stdout is empty
+      const pyProbe = makeFakeProcess()
+      mockedSpawn.mockReturnValueOnce(pyProbe.proc)
+
+      const handler = handlers.get('setup:check-system')!
+      const promise = handler() as Promise<unknown>
+
+      await vi.waitFor(() => mockedSpawn.mock.calls.length >= 1)
+      // Only emit stderr, no stdout — close non-zero so python check fails
+      pyProbe.stderr.emit('data', Buffer.from('command not found: python\n'))
+      pyProbe.emitClose(1)
+
+      const result = (await promise) as { ok: boolean; data: Record<string, unknown> }
+      expect(result.data.pythonInstalled).toBe(false)
+    })
   })
 
   describe('setup:is-first-run / set-first-run-done', () => {
@@ -305,6 +336,42 @@ describe('setup-handlers', () => {
       const result = (await handler({}, 'sk-ant-new-key')) as { ok: boolean }
       expect(result.ok).toBe(true)
       expect(process.env['ANTHROPIC_API_KEY']).toBe('sk-ant-new-key')
+    })
+
+    it('returns ok:false when saving the key throws an error', async () => {
+      const handler = handlers.get('setup:save-api-key')!
+      const originalEnv = process.env
+
+      // Make process.env setter throw to trigger the catch block
+      const throwingProxy = new Proxy(originalEnv, {
+        set: () => {
+          throw new Error('env write error')
+        },
+        get: (t, p) => t[p as string],
+      })
+      Object.defineProperty(process, 'env', {
+        get: () => throwingProxy,
+        configurable: true,
+        enumerable: true,
+      })
+
+      try {
+        const result = (await handler({}, 'sk-ant-bad')) as {
+          ok: boolean
+          error: string
+          code: string
+        }
+        expect(result.ok).toBe(false)
+        expect(result.error).toBe('Failed to save API key')
+        expect(result.code).toBe('SETUP_SAVE_KEY_ERROR')
+      } finally {
+        Object.defineProperty(process, 'env', {
+          value: originalEnv,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        })
+      }
     })
   })
 

@@ -477,5 +477,125 @@ describe('ClaudeSummarizationService', () => {
       // Should call the API exactly once
       expect(mockCreate).toHaveBeenCalledOnce()
     })
+
+    it('uses meetingTitle in chunk labels when meetingTitle option is provided', async () => {
+      const longTranscript = SAMPLE_TRANSCRIPT.repeat(800)
+
+      mockCreate.mockResolvedValue(
+        mockToolResponse({
+          summary: '## Summary',
+          actionItems: [],
+          keyTopics: [],
+          decisions: [],
+        }),
+      )
+
+      await service.summarize(longTranscript, { meetingTitle: 'Team Sync' })
+
+      // Should have called the API multiple times (chunks + meta)
+      expect(mockCreate.mock.calls.length).toBeGreaterThan(1)
+
+      // The first chunk call should include "Team Sync (part 1 of N)" in the user message
+      const firstCallArgs = mockCreate.mock.calls[0][0] as { messages: Array<{ content: string }> }
+      expect(firstCallArgs.messages[0].content).toContain('Team Sync (part 1 of')
+    })
+
+    it('handles transcript chunk with no newline — uses hard character break', async () => {
+      // Build a transcript with no newlines so the chunk has no preferred break point
+      // This forces the `if (newline > offset)` branch to be false
+      const noNewlineBlock = 'x'.repeat(40_000) // exactly CHUNK_CHAR_LIMIT, no newlines
+      const longTranscript = noNewlineBlock.repeat(3) // 120K chars, well above threshold
+
+      mockCreate.mockResolvedValue(
+        mockToolResponse({
+          summary: '## Summary',
+          actionItems: [],
+          keyTopics: [],
+          decisions: [],
+        }),
+      )
+
+      const result = await service.summarize(longTranscript)
+
+      expect(mockCreate.mock.calls.length).toBeGreaterThan(1)
+      expect(result.summary).toBeTruthy()
+    })
+  })
+
+  // ── _extractToolResult null-field branches ────────────────────────────────
+
+  describe('summarize() — null field branches in tool result', () => {
+    it('handles null actionItems / keyTopics / decisions from the model', async () => {
+      const rawResponse = {
+        id: 'msg_test',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        model: 'claude-sonnet-4-5-20250514',
+        stop_reason: 'tool_use' as const,
+        stop_sequence: null,
+        usage: { input_tokens: 100, output_tokens: 200 },
+        content: [
+          {
+            type: 'tool_use' as const,
+            id: 'toolu_01',
+            name: 'produce_summary',
+            input: {
+              summary: 'Null fields test.',
+              // actionItems, keyTopics, decisions intentionally omitted (undefined → ?? [])
+            },
+          },
+        ],
+      }
+      mockCreate.mockResolvedValueOnce(rawResponse)
+
+      const result = await service.summarize(SAMPLE_TRANSCRIPT)
+
+      expect(result.actionItems).toEqual([])
+      expect(result.keyTopics).toEqual([])
+      expect(result.decisions).toEqual([])
+    })
+
+    it('handles action item with missing text and missing assignee', async () => {
+      const rawResponse = {
+        id: 'msg_test',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        model: 'claude-sonnet-4-5-20250514',
+        stop_reason: 'tool_use' as const,
+        stop_sequence: null,
+        usage: { input_tokens: 100, output_tokens: 200 },
+        content: [
+          {
+            type: 'tool_use' as const,
+            id: 'toolu_01',
+            name: 'produce_summary',
+            input: {
+              summary: 'Test.',
+              actionItems: [{}], // missing text and assignee
+              keyTopics: [],
+              decisions: [],
+            },
+          },
+        ],
+      }
+      mockCreate.mockResolvedValueOnce(rawResponse)
+
+      const result = await service.summarize(SAMPLE_TRANSCRIPT)
+
+      expect(result.actionItems[0].text).toBe('')
+      expect(result.actionItems[0].assignee).toBeUndefined()
+    })
+
+    it('throws with empty textBlocks when model returns no-text content and wrong tool', async () => {
+      // Covers the `textBlocks ? ... : ''` branch where textBlocks is empty
+      const badResponse = {
+        id: 'msg_test',
+        stop_reason: 'tool_use' as const,
+        content: [] as Anthropic.ContentBlock[],
+      }
+      mockCreate.mockResolvedValueOnce(badResponse)
+
+      await expect(service.summarize(SAMPLE_TRANSCRIPT)).rejects.toThrow(/did not return/)
+    })
   })
 })

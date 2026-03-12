@@ -344,6 +344,39 @@ describe('WhisperTranscriptionService', () => {
       vi.useFakeTimers()
 
       const collectPromise = collectEvents(service, '/audio/test.mp3')
+      it('enqueues sentinel (no error) when close fires after abortController was aborted', async () => {
+        // Use a very short timeout so the abortController fires quickly
+        const fakeAbort = makeFakeProcess()
+        mockedSpawn.mockReturnValueOnce(fakeAbort.proc)
+
+        const events: unknown[] = []
+        const gen = service.transcribe('/audio/test.mp3', { timeoutSeconds: 0.001 })
+
+        const collectDone = (async () => {
+          for await (const e of gen) {
+            events.push(e)
+          }
+        })()
+
+        await vi.waitFor(() => fakeAbort.proc.listenerCount('close') > 0)
+
+        // Wait for the 1ms timeout to fire and abort the controller
+        await new Promise((r) => setTimeout(r, 30))
+
+        // Now emit close — abortController.signal.aborted should be true
+        fakeAbort.proc.emit('close', null, 'SIGTERM')
+
+        await collectDone
+
+        // Aborted branch only enqueues null sentinel → generator returns without error events
+        expect(
+          events.every(
+            (e) =>
+              (e as { type: string }).type !== 'error' ||
+              (e as { code: string }).code === 'CANCELLED',
+          ),
+        ).toBe(true)
+      })
 
       // Wait for listeners to attach
       await vi.waitFor(() => fake.proc.listenerCount('close') > 0)
