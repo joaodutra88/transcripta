@@ -1,0 +1,50 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+model Meeting {
+  id           String      @id @default(cuid())
+  title        String
+  audioPath    String
+  duration     Int?
+  status       String      @default("PENDING")
+  errorMessage String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  transcript   Transcript?
+  summary      Summary?
+}
+
+model Transcript {
+  id        String   @id @default(cuid())
+  meetingId String   @unique
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  content   String
+  segments  String   // JSON: TranscriptSegment[]
+  createdAt DateTime @default(now())
+}
+
+model Summary {
+  id          String       @id @default(cuid())
+  meetingId   String       @unique
+  meeting     Meeting      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  content     String
+  keyTopics   String       @default("[]") // JSON: string[]
+  decisions   String       @default("[]") // JSON: string[]
+  actionItems ActionItem[]
+  createdAt   DateTime     @default(now())
+}
+
+model ActionItem {
+  id        String  @id @default(cuid())
+  summaryId String
+  summary   Summary @relation(fields: [summaryId], references: [id], onDelete: Cascade)
+  text      String
+  assignee  String?
+  completed Boolean @default(false)
+}

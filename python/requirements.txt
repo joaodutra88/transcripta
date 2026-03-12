@@ -1,0 +1,7 @@
+# Core transcription engine — required
+faster-whisper>=1.0.0
+
+# Speaker diarization — optional, only needed when --diarize is passed.
+# whisperx pulls in torch, torchaudio, and pyannote.audio transitively.
+# Comment out if diarization is not needed to keep the environment lean.
+whisperx>=3.1.1
